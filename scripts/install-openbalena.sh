@@ -55,16 +55,15 @@ if [ "$1" == "generate-config" ]; then
     mkdir -p "${PROJECT_ROOT}/open-balena/config"
 
     echo "==> Generating configuration using docker-compose..."
-    cd "${OPEN_BALENA_DIR}"
 
-    # Generate config using Makefile
-    make config DNS_TLD="${HOSTNAME}" \
-                SUPERUSER_EMAIL="admin@${HOSTNAME}" \
-                ORG_UNIT="openBalena"
+    # Generate config using Makefile (must be run in open-balena directory)
+    (cd "${OPEN_BALENA_DIR}" && make config DNS_TLD="${HOSTNAME}" \
+                                            SUPERUSER_EMAIL="admin@${HOSTNAME}" \
+                                            ORG_UNIT="openBalena")
 
     # Start containers to generate certificates and secrets
     echo "==> Starting docker-compose to generate certificates and secrets..."
-    docker compose up -d
+    docker compose -f "${OPEN_BALENA_DIR}/docker-compose.yml" up -d
 
     # Wait for cert-manager to generate certificates
     echo "==> Waiting for certificate generation..."
@@ -72,7 +71,7 @@ if [ "$1" == "generate-config" ]; then
 
     # Wait for api service to be healthy and generate all secrets
     echo "==> Waiting for API service to initialize..."
-    until [ "$(docker compose ps api --format json | jq -r '.Health' 2>/dev/null)" = "healthy" ]; do
+    until [ "$(docker compose -f "${OPEN_BALENA_DIR}/docker-compose.yml" ps api --format json | jq -r '.Health' 2>/dev/null)" = "healthy" ]; do
         printf '.'
         sleep 3
     done
@@ -97,14 +96,14 @@ export OPENBALENA_SSH_AUTHORIZED_KEYS=""
 EOF
 
     # Extract all the secrets from the API container's environment
-    docker compose exec -T api cat config/env | grep -E "^(COOKIE_SESSION_SECRET|JSON_WEB_TOKEN_SECRET|VPN_SERVICE_API_KEY|API_SERVICE_API_KEY|REGISTRY_SECRET_KEY|TOKEN_AUTH_BUILDER_TOKEN)=" | while read line; do
+    docker compose -f "${OPEN_BALENA_DIR}/docker-compose.yml" exec -T api cat config/env | grep -E "^(COOKIE_SESSION_SECRET|JSON_WEB_TOKEN_SECRET|VPN_SERVICE_API_KEY|API_SERVICE_API_KEY|REGISTRY_SECRET_KEY|TOKEN_AUTH_BUILDER_TOKEN)=" | while read line; do
         VAR_NAME=$(echo "$line" | cut -d= -f1)
         VAR_VALUE=$(echo "$line" | cut -d= -f2-)
         echo "export OPENBALENA_${VAR_NAME}=\"${VAR_VALUE}\"" >> "${PROJECT_ROOT}/open-balena/config/activate"
     done
 
     # Extract S3 credentials
-    docker compose exec -T s3 cat config/env | grep -E "^(S3_MINIO_ACCESS_KEY|S3_MINIO_SECRET_KEY)=" | while read line; do
+    docker compose -f "${OPEN_BALENA_DIR}/docker-compose.yml" exec -T s3 cat config/env | grep -E "^(S3_MINIO_ACCESS_KEY|S3_MINIO_SECRET_KEY)=" | while read line; do
         VAR_NAME=$(echo "$line" | cut -d= -f1)
         VAR_VALUE=$(echo "$line" | cut -d= -f2-)
         if [ "$VAR_NAME" = "S3_MINIO_ACCESS_KEY" ]; then
@@ -115,23 +114,23 @@ EOF
     done
 
     # Extract VPN DH params (this needs to be extracted from the VPN service)
-    VPN_DH=$(docker compose exec -T vpn cat /etc/openvpn/dh.pem 2>/dev/null | base64 -w 0 2>/dev/null || docker compose exec -T vpn cat /etc/openvpn/dh.pem 2>/dev/null | base64)
+    VPN_DH=$(docker compose -f "${OPEN_BALENA_DIR}/docker-compose.yml" exec -T vpn cat /etc/openvpn/dh.pem 2>/dev/null | base64 -w 0 2>/dev/null || docker compose -f "${OPEN_BALENA_DIR}/docker-compose.yml" exec -T vpn cat /etc/openvpn/dh.pem 2>/dev/null | base64)
     echo "export OPENBALENA_VPN_SERVER_DH=\"${VPN_DH}\"" >> "${PROJECT_ROOT}/open-balena/config/activate"
 
     # Copy certificates to a temporary location
     echo "==> Copying certificates..."
     mkdir -p "${PROJECT_ROOT}/open-balena/config/certs"
-    docker cp $(docker compose ps -q cert-manager):/certs/export/ "${PROJECT_ROOT}/open-balena/config/certs/" || {
+    docker cp $(docker compose -f "${OPEN_BALENA_DIR}/docker-compose.yml" ps -q cert-manager):/certs/export/ "${PROJECT_ROOT}/open-balena/config/certs/" || {
         echo "Warning: Could not copy certificates from cert-manager. They may not be ready yet."
         echo "Attempting to extract from volumes..."
 
         # Alternative: extract from haproxy container which also has access to certs
-        docker cp $(docker compose ps -q haproxy):/certs/ "${PROJECT_ROOT}/open-balena/config/certs/" 2>/dev/null || true
+        docker cp $(docker compose -f "${OPEN_BALENA_DIR}/docker-compose.yml" ps -q haproxy):/certs/ "${PROJECT_ROOT}/open-balena/config/certs/" 2>/dev/null || true
     }
 
     # Stop the docker-compose stack
     echo "==> Stopping docker-compose stack..."
-    docker compose down
+    docker compose -f "${OPEN_BALENA_DIR}/docker-compose.yml" down
 
     echo "==> Configuration generated successfully!"
     echo "Configuration saved to: ${PROJECT_ROOT}/open-balena/config/activate"
