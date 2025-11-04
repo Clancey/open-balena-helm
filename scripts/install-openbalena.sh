@@ -7,8 +7,18 @@ PROJECT_ROOT="${SCRIPT_DIR}/.."
 OPEN_BALENA_DIR="${PROJECT_ROOT}/open-balena"
 CONFIG_DIR="${PROJECT_ROOT}/config"
 
-# Load local cluster
-kubectl config use-context docker-desktop
+# Verify kubernetes cluster is accessible
+if ! kubectl cluster-info &>/dev/null; then
+    echo "Error: Cannot connect to kubernetes cluster"
+    echo "Please ensure:"
+    echo "  - kubectl is configured with a valid context"
+    echo "  - Your kubernetes cluster is running and accessible"
+    echo ""
+    echo "Current context: $(kubectl config current-context 2>/dev/null || echo 'none')"
+    exit 1
+fi
+
+echo "Using kubernetes context: $(kubectl config current-context)"
 
 # Create namespaces
 kubectl create namespace openbalena 2>/dev/null || true
