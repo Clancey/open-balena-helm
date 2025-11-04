@@ -7,6 +7,25 @@ PROJECT_ROOT="${SCRIPT_DIR}/.."
 OPEN_BALENA_DIR="${PROJECT_ROOT}/open-balena"
 CONFIG_DIR="${PROJECT_ROOT}/config"
 
+# Check Docker access
+if ! docker ps &>/dev/null; then
+    echo "Error: Cannot access Docker daemon"
+    echo ""
+    echo "This script requires Docker access. Please do one of the following:"
+    echo ""
+    echo "Option 1 - Add your user to the docker group (recommended):"
+    echo "  sudo usermod -aG docker \$USER"
+    echo "  newgrp docker"
+    echo "  # Or logout and login again"
+    echo ""
+    echo "Option 2 - Run this script with sudo:"
+    echo "  sudo ./scripts/install-openbalena.sh generate-config ..."
+    echo ""
+    echo "Current user: $(whoami)"
+    echo "Docker socket: /var/run/docker.sock"
+    exit 1
+fi
+
 # Verify kubernetes cluster is accessible
 if ! kubectl cluster-info &>/dev/null; then
     echo "Error: Cannot connect to kubernetes cluster"
@@ -61,13 +80,17 @@ if [ "$1" == "generate-config" ]; then
                                             SUPERUSER_EMAIL="admin@${HOSTNAME}" \
                                             ORG_UNIT="openBalena")
 
-    # Start containers to generate certificates and secrets
-    echo "==> Starting docker-compose to generate certificates and secrets..."
-    docker compose -f "${OPEN_BALENA_DIR}/docker-compose.yml" up -d
+    # Start only essential services to generate certificates and secrets
+    # We don't need test services like 'dut', 'sut', etc.
+    echo "==> Starting essential docker-compose services to generate certificates and secrets..."
+
+    # Start core services: db, redis, s3, cert-manager, haproxy, haproxy-sidecar, api, vpn, registry
+    docker compose -f "${OPEN_BALENA_DIR}/docker-compose.yml" up -d \
+        db redis s3 cert-manager haproxy haproxy-sidecar api vpn registry
 
     # Wait for cert-manager to generate certificates
-    echo "==> Waiting for certificate generation..."
-    sleep 5
+    echo "==> Waiting for certificate generation (this may take a minute)..."
+    sleep 10
 
     # Wait for api service to be healthy and generate all secrets
     echo "==> Waiting for API service to initialize..."
